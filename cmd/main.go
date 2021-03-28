@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/gorilla/mux"
+	"github.com/minenok/shop-gennady/internal/api/graphql"
 	"github.com/minenok/shop-gennady/internal/api/rest"
 	"github.com/minenok/shop-gennady/internal/repository"
 	"log"
@@ -10,8 +11,18 @@ import (
 )
 
 func main() {
+	productsRepo := repository.NewProducts()
+	priceRepo := repository.NewPrices()
+	availabilityRepo := repository.NewAvailability()
+
 	r := mux.NewRouter()
-	rest.NewAPI(repository.NewProducts(), repository.NewPrices(), repository.NewAvailability()).Bind(r)
+	rest.NewAPI(productsRepo, priceRepo, availabilityRepo).Bind(r)
+
+	ga, err := graphql.NewAPI(productsRepo, priceRepo, availabilityRepo)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ga.Bind(r)
 
 	srv := &http.Server{
 		Handler:      r,
