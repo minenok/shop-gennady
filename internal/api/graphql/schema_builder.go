@@ -5,8 +5,78 @@ import (
 	"github.com/minenok/shop-gennady/internal/model"
 )
 
-func (a *API) init() error {
-	warehouseOptionType := graphql.NewObject(graphql.ObjectConfig{
+type schemaBuilder struct {
+	productRepo      ProductRepository
+	priceRepo        PriceRepository
+	availabilityRepo AvailabilityRepository
+
+	productType            *graphql.Object
+	warehouseType          *graphql.Object
+	availabilityOptionType *graphql.Object
+}
+
+func newSchemaBuilder(productRepo ProductRepository, priceRepo PriceRepository, availabilityRepo AvailabilityRepository) *schemaBuilder {
+	return &schemaBuilder{
+		productRepo:      productRepo,
+		priceRepo:        priceRepo,
+		availabilityRepo: availabilityRepo,
+	}
+}
+
+type ProductRepository interface {
+	FindProducts() ([]model.Product, error)
+	FindProduct(id uint) (model.Product, error)
+}
+
+type PriceRepository interface {
+	CurrentPrice([]model.Product) (map[uint]uint, error)
+}
+
+type AvailabilityRepository interface {
+	AvailabilityOptions(productID uint) ([]model.AvailabilityOption, error)
+	WarehouseByID(uint) (model.Warehouse, error)
+}
+
+func (sb *schemaBuilder) Build() (graphql.Schema, error) {
+	sb.buildWarehouseType()
+	sb.buildAvailabilityOptionType()
+	sb.buildProductType()
+	return graphql.NewSchema(graphql.SchemaConfig{
+		Query: sb.buildQuery(),
+	})
+}
+
+func (sb *schemaBuilder) buildQuery() *graphql.Object {
+	return graphql.NewObject(graphql.ObjectConfig{
+		Name: "Query",
+		Fields: graphql.Fields{
+			"products": &graphql.Field{
+				Type: graphql.NewList(sb.productType),
+				Args: graphql.FieldConfigArgument{
+					"id": &graphql.ArgumentConfig{
+						Description: "id товара",
+						Type:        graphql.Int,
+					},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					id, ok := p.Args["id"].(int)
+					if !ok {
+						return sb.productRepo.FindProducts()
+					}
+					pr, err := sb.productRepo.FindProduct(uint(id))
+					if err != nil {
+						return nil, err
+					}
+					return []model.Product{pr}, nil
+				},
+			},
+		},
+	})
+
+}
+
+func (sb *schemaBuilder) buildWarehouseType() {
+	sb.warehouseType = graphql.NewObject(graphql.ObjectConfig{
 		Name: "warehouse",
 		Fields: graphql.Fields{
 			"id": &graphql.Field{
@@ -41,16 +111,18 @@ func (a *API) init() error {
 			},
 		},
 	})
+}
 
-	availabilityOptionType := graphql.NewObject(graphql.ObjectConfig{
+func (sb *schemaBuilder) buildAvailabilityOptionType() {
+	sb.availabilityOptionType = graphql.NewObject(graphql.ObjectConfig{
 		Name: "availability_option",
 		Fields: graphql.Fields{
 			"warehouse": &graphql.Field{
-				Type:        warehouseOptionType,
+				Type:        sb.warehouseType,
 				Description: "Склад",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					if ao, ok := p.Source.(model.AvailabilityOption); ok {
-						wh, err := a.availabilityRepo.WarehouseByID(ao.WarehouseID)
+						wh, err := sb.availabilityRepo.WarehouseByID(ao.WarehouseID)
 						if err != nil {
 							return nil, err
 						}
@@ -71,8 +143,10 @@ func (a *API) init() error {
 			},
 		},
 	})
+}
 
-	productType := graphql.NewObject(graphql.ObjectConfig{
+func (sb *schemaBuilder) buildProductType() {
+	sb.productType = graphql.NewObject(graphql.ObjectConfig{
 		Name: "product",
 		Fields: graphql.Fields{
 			"id": &graphql.Field{
@@ -130,7 +204,7 @@ func (a *API) init() error {
 				Description: "цена товара",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					if pr, ok := p.Source.(model.Product); ok {
-						prices, err := a.priceRepo.CurrentPrice([]model.Product{pr})
+						prices, err := sb.priceRepo.CurrentPrice([]model.Product{pr})
 						if err != nil {
 							return nil, err
 						}
@@ -140,11 +214,11 @@ func (a *API) init() error {
 				},
 			},
 			"availability": &graphql.Field{
-				Type:        graphql.NewList(availabilityOptionType),
+				Type:        graphql.NewList(sb.availabilityOptionType),
 				Description: "наличие товара",
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					if pr, ok := p.Source.(model.Product); ok {
-						av, err := a.availabilityRepo.AvailabilityOptions(pr.ID)
+						av, err := sb.availabilityRepo.AvailabilityOptions(pr.ID)
 						if err != nil {
 							return nil, err
 						}
@@ -155,38 +229,4 @@ func (a *API) init() error {
 			},
 		},
 	})
-
-	queryType := graphql.NewObject(graphql.ObjectConfig{
-		Name: "Query",
-		Fields: graphql.Fields{
-			"products": &graphql.Field{
-				Type: graphql.NewList(productType),
-				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
-						Description: "id товара",
-						Type:        graphql.Int,
-					},
-				},
-				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					id, ok := p.Args["id"].(int)
-					if !ok {
-						return a.productRepo.FindProducts()
-					}
-					pr, err := a.productRepo.FindProduct(uint(id))
-					if err != nil {
-						return nil, err
-					}
-					return []model.Product{pr}, nil
-				},
-			},
-		},
-	})
-	s, err := graphql.NewSchema(graphql.SchemaConfig{
-		Query: queryType,
-	})
-	if err != nil {
-		return err
-	}
-	a.schema = s
-	return nil
 }
